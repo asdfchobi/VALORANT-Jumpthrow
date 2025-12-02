@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>VALORANT ジャンプ投げタイミングチェッカー</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      max-width: 800px;
+      margin: 30px auto;
+      text-align: center;
+      line-height: 1.6;
+    }
+    .desc {
+      text-align: left;
+      background: #f5f5f5;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      margin-bottom: 20px;
+    }
+    button {
+      padding: 10px 20px;
+      font-size: 18px;
+      margin: 5px;
+    }
+    #status {
+      margin-top: 16px;
+      font-size: 16px;
+    }
+    #result {
+      margin-top: 10px;
+      font-size: 18px;
+      font-weight: bold;
+    }
+    #detail {
+      margin-top: 4px;
+      font-size: 14px;
+    }
+    #summary {
+      margin-top: 10px;
+      font-size: 15px;
+      font-weight: bold;
+    }
+    #history {
+      margin-top: 20px;
+      text-align: left;
+      font-size: 13px;
+      max-height: 200px;
+      overflow-y: auto;
+      border-top: 1px solid #ddd;
+      padding-top: 10px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>VALORANT ジャンプ投げタイミングチェッカー</h1>
+
+  <div class="desc">
+    <p>
+      VALORANTでは、ジャンプ投げを安定させるために、<br>
+      <strong>ジャンプ（スペース）→ 投げ（左クリック）</strong> をごく短い間隔（例：100ms 以内）で入力する必要があります。
+    </p>
+    <p>
+      このツールは、<strong>「スペース → 左クリック」</strong> の順番と、その時間差がどれくらいかをチェックする練習用ツールです。
+    </p>
+    <p>
+      ＜モード＞<br>
+      ・「練習（1回）」：その都度、成功/失敗と簡単なコメントを表示します。<br>
+      ・「10回テスト」：10回連続で計測し、最後に成功率と安定度を表示します。
+    </p>
+    <p>
+      ※画面内を一度クリックしてアクティブにしてから使ってください。<br>
+      ※スペースを押した瞬間から「ジャンプ → クリック」のタイミング計測が始まります。
+    </p>
+  </div>
+
+  <button id="practiceButton">練習（1回）</button>
+  <button id="testButton">10回テスト</button>
+  <button id="resetButton">リセット</button>
+
+  <p id="status">モードを選んでから、好きなタイミングで「スペース → 左クリック」のジャンプ投げ入力を試してみてください。</p>
+  <p id="result"></p>
+  <p id="detail"></p>
+  <p id="summary"></p>
+
+  <div id="history"></div>
+
+  <script>
+    let mode = "idle";          // "idle" | "practice" | "test"
+    let waitingForJump = false; // スペース待ち状態か
+    let measuring = false;      // スペースは押されていてクリック待ちか
+    let firstTime = null;
+    let secondTimeoutId = null;
+
+    // テストモード用
+    const TEST_TARGET = 10;
+    let testCount = 0;
+    let testSuccess = 0;
+    let testFail = 0;
+    let testDiffSum = 0;   // 成功分の合計
+    let testDiffMax = 0;   // 成功分の最大
+
+    const statusEl  = document.getElementById('status');
+    const resultEl  = document.getElementById('result');
+    const detailEl  = document.getElementById('detail');
+    const summaryEl = document.getElementById('summary');
+    const historyEl = document.getElementById('history');
+
+    const practiceBtn = document.getElementById('practiceButton');
+    const testBtn     = document.getElementById('testButton');
+    const resetBtn    = document.getElementById('resetButton');
+
+    function clearSecondTimeout() {
+      if (secondTimeoutId) {
+        clearTimeout(secondTimeoutId);
+        secondTimeoutId = null;
+      }
+    }
+
+    function resetTrialOnly() {
+      waitingForJump = false;
+      measuring = false;
+      firstTime = null;
+      clearSecondTimeout();
+    }
+
+    function resetAll() {
+      resetTrialOnly();
+      mode = "idle";
+      testCount = 0;
+      testSuccess = 0;
+      testFail = 0;
+      testDiffSum = 0;
+      testDiffMax = 0;
+      practiceBtn.disabled = false;
+      testBtn.disabled = false;
+      resultEl.textContent = '';
+      detailEl.textContent = '';
+      summaryEl.textContent = '';
+      statusEl.textContent = 'モードを選んでから、好きなタイミングで「スペース → 左クリック」のジャンプ投げ入力を試してみてください。';
+      historyEl.textContent = '';
+    }
+
+    resetBtn.addEventListener('click', resetAll);
+
+    // 練習モード開始
+    practiceBtn.addEventListener('click', () => {
+      resetTrialOnly();
+      mode = "practice";
+      practiceBtn.disabled = true;
+      testBtn.disabled = true;
+      waitingForJump = true;
+      statusEl.textContent = '練習：好きなタイミングでスペースを押してジャンプ → すぐ左クリックを押してください。';
+      resultEl.textContent = '';
+      detailEl.textContent = '';
+      summaryEl.textContent = '';
+    });
+
+    // テストモード開始
+    testBtn.addEventListener('click', () => {
+      resetTrialOnly();
+      mode = "test";
+      testCount = 0;
+      testSuccess = 0;
+      testFail = 0;
+      testDiffSum = 0;
+      testDiffMax = 0;
+      practiceBtn.disabled = true;
+      testBtn.disabled = true;
+      summaryEl.textContent = '';
+      startNextTestTrial();
+    });
+
+    function startNextTestTrial() {
+      resetTrialOnly();
+      testCount++;
+      if (testCount > TEST_TARGET) {
+        // 念のため
+        showTestSummary();
+        mode = "idle";
+        practiceBtn.disabled = false;
+        testBtn.disabled = false;
+        return;
+      }
+      waitingForJump = true;
+      statusEl.textContent = `テスト ${testCount}/${TEST_TARGET} 回目：好きなタイミングでスペースを押してジャンプ → すぐ左クリックを押してください。`;
+      resultEl.textContent = '';
+      detailEl.textContent = '';
+    }
+
+    function addHistoryLine(text) {
+      const line = document.createElement('div');
+      line.textContent = text;
+      historyEl.prepend(line);
+    }
+
+    // コメント生成
+    function buildDetailMessage(success, diffMs, reason) {
+      if (reason === 'order') {
+        return '失敗：クリックが先に入力されています。ジャンプ投げは「スペース → 左クリック」の順で入力してください。';
+      }
+      if (reason === 'timeout') {
+        return '失敗：ジャンプのあとにクリックが検知されませんでした。スペースの直後にすぐクリックするイメージで入力してみてください。';
+      }
+      if (diffMs == null) {
+        return '失敗：入力が正しく検知できませんでした。もう一度ゆっくり確認しながら押してみてください。';
+      }
+
+      if (success) {
+        if (diffMs <= 40) {
+          return '成功：かなりいいタイミングです。この感覚をそのまま実戦でも意識してみてください。';
+        } else if (diffMs <= 80) {
+          return '成功：実戦でも十分使えるタイミングです。もう少しだけクリックを早めると、より安定してきます。';
+        } else {
+          return '成功：ギリギリ成功です。ジャンプの直後にすぐクリックするイメージで、もう少し詰めていきましょう。';
+        }
+      } else {
+        if (diffMs <= 150) {
+          return '失敗：クリックが少し遅めです。ジャンプした瞬間にすぐ投げるイメージで入力してみてください。';
+        } else {
+          return '失敗：ジャンプとクリックの間隔が大きいです。まずはゆっくり確かめながら、リズムを一定にする練習から始めてみましょう。';
+        }
+      }
+    }
+
+    function showTestSummary() {
+      const total = testSuccess + testFail;
+      if (total === 0) {
+        summaryEl.textContent = 'テスト結果：有効な試行がありませんでした。';
+        return;
+      }
+
+      const rate = Math.round((testSuccess / total) * 100);
+      let msg = `テスト結果：${total}回中 ${testSuccess}回成功（成功率 ${rate}%）`;
+
+      let detail = '';
+      if (testSuccess === TEST_TARGET) {
+        detail = '10回すべて成功しています。ジャンプ投げのタイミングはかなり安定しています。';
+      } else if (testSuccess >= 8) {
+        detail = '成功回数が多く、かなり安定してきています。あと少し詰めるとほぼ固定距離で投げられそうです。';
+      } else if (testSuccess >= 5) {
+        detail = '半分くらいは成功していますが、ときどき大きくズレる場面がありそうです。繰り返し練習すると安定してきそうです。';
+      } else {
+        detail = 'まだ成功回数が少なめです。まずは「スペース → すぐクリック」のリズムを身体に覚えさせるイメージで練習してみましょう。';
+      }
+
+      if (testSuccess > 0 && testDiffSum > 0) {
+        const avgDiff = testDiffSum / testSuccess;
+        msg += ` / 成功時の平均ズレ: ${avgDiff.toFixed(1)} ms, 最大ズレ: ${testDiffMax.toFixed(1)} ms`;
+      }
+
+      summaryEl.textContent = msg + ' ' + detail;
+    }
+
+    function finishTrial(success, diffMs, reason) {
+      // 結果表示
+      if (reason === 'order') {
+        resultEl.textContent = '失敗：順番ミス（クリックが先）。';
+      } else if (reason === 'timeout') {
+        resultEl.textContent = '失敗：ジャンプ後にクリックが検知されませんでした。';
+      } else if (diffMs == null) {
+        resultEl.textContent = '失敗：入力が正しく検知できませんでした。';
+      } else {
+        const label = success ? '成功' : '失敗';
+        resultEl.textContent = `${label}：${diffMs.toFixed(1)} ms 差`;
+      }
+
+      // コメント
+      detailEl.textContent = buildDetailMessage(success, diffMs, reason);
+
+      // 履歴
+      const timeStr = new Date().toLocaleTimeString();
+      const diffStr = diffMs == null ? '---' : `${diffMs.toFixed(1)} ms`;
+      let extra = '';
+      if (reason === 'order') {
+        extra = '順番: 先にクリック';
+      } else if (reason === 'timeout') {
+        extra = '順番: スペースのみ';
+      } else {
+        extra = '順番: スペース → クリック';
+      }
+      addHistoryLine(`${timeStr} - ${success ? '成功' : '失敗'} / 差: ${diffStr} / ${extra}`);
+
+      // テストモード集計
+      if (mode === "test") {
+        if (success) {
+          testSuccess++;
+          if (diffMs != null) {
+            testDiffSum += diffMs;
+            if (diffMs > testDiffMax) testDiffMax = diffMs;
+          }
+        } else {
+          testFail++;
+        }
+
+        if (testCount >= TEST_TARGET) {
+          showTestSummary();
+          mode = "idle";
+          practiceBtn.disabled = false;
+          testBtn.disabled = false;
+        } else {
+          setTimeout(() => {
+            startNextTestTrial();
+          }, 800);
+        }
+      } else if (mode === "practice") {
+        mode = "idle";
+        practiceBtn.disabled = false;
+        testBtn.disabled = false;
+      }
+
+      resetTrialOnly();
+    }
+
+    // 入力処理
+    function handleSpace() {
+      if (mode === "idle") return;
+
+      // クリック先行などで既に計測中なら無視
+      if (measuring) return;
+
+      if (waitingForJump) {
+        // ここで計測開始
+        waitingForJump = false;
+        measuring = true;
+        firstTime = performance.now();
+        statusEl.textContent = 'ジャンプ入力を検知。すぐに左クリックを押してください。';
+
+        clearSecondTimeout();
+        secondTimeoutId = setTimeout(() => {
+          if (measuring && firstTime !== null) {
+            // クリックが来なかった
+            finishTrial(false, null, 'timeout');
+          }
+        }, 1000); // 1秒以上空いたら失敗扱い
+      }
+    }
+
+    function handleClick() {
+      if (mode === "idle") return;
+
+      // ジャンプ待ちの状態でクリック → 順番ミス
+      if (waitingForJump && !measuring) {
+        finishTrial(false, null, 'order');
+        return;
+      }
+
+      // ジャンプ済みでクリック待ち → ここで差分計測
+      if (measuring && firstTime !== null) {
+        clearSecondTimeout();
+        const now = performance.now();
+        const diffMs = Math.abs(now - firstTime);
+        const success = diffMs <= 100; // 100ms 以内を成功とする
+        finishTrial(success, diffMs, 'normal');
+      }
+    }
+
+    // キーボード（スペース）
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space') {
+        e.preventDefault();
+        handleSpace();
+      }
+    });
+
+    // マウス（左クリック）
+    window.addEventListener('mousedown', (e) => {
+      if (e.button === 0) {
+        handleClick();
+      }
+    });
+  </script>
+
+</body>
+</html>
